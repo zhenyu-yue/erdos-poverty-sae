@@ -15,16 +15,26 @@ This project uses Machine Learning (XGBoost/Mixed Effects) to estimate poverty a
 ## 🚀 Quick Start Guide
 ### 1. Clone the Repo
 ```bash
-git clone [https://github.com/zhenyu-yue/erdos-poverty-sae.git](https://github.com/zhenyu-yue/erdos-poverty-sae.git)
+git clone https://github.com/zhenyu-yue/erdos-poverty-sae.git
 cd erdos-poverty-sae
 ```
 (Alternatively, click [here](https://github.com/zhenyu-yue/erdos-poverty-sae.git) to visit the git repo, select "code" then "Download ZIP" and unzip the file.)
 
 
 ### 2. Set Up Environment
+Don't forget to change your working directory to the project directory before proceeding.
+
+**Option A: Automatic (Recommended)**
+Run the setup script to create a clean environment:
 ```bash
 bash setup_env.sh
 conda activate poverty-project
+```
+
+**Option B: Manual (Fast)** If you prefer to use your current Python environment, just install the requirements directly:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ### 3. Download the Data
