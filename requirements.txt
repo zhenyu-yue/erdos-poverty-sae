@@ -1,0 +1,19 @@
+# Data Manipulation
+pandas
+numpy
+openpyxl
+xlrd
+
+# Web Scraping
+requests
+beautifulsoup4
+
+# Machine Learning & Stats
+scikit-learn
+xgboost
+statsmodels
+scipy
+
+# Notebooks
+jupyter
+notebook

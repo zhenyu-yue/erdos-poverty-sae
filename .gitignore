@@ -1,4 +1,10 @@
-acs_data_2024/
+# Ignore all data
+data/
 *.csv
 *.zip
+
+# System files
 .DS_Store
+__pycache__/
+*.pyc
+.ipynb_checkpoints
