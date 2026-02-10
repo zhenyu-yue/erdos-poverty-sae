@@ -12,33 +12,35 @@ TARGET_STATES = {
 
 BASE_URL = "https://api.census.gov/data/2023/acs/acs5"
 
-# --- DEFINING THE BUCKETS (STRATA) ---
-# We need counts for Sex x Age to build our "Representative People".
-# Table B01001: Sex by Age
-# To save space, I'll generate these codes programmatically.
+def get_storage_path():
+    # Save to data/raw relative to this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go up one level from src/ to root/, then into data/raw/
+    storage_path = os.path.join(script_dir, "..", "data", "raw")
+    os.makedirs(storage_path, exist_ok=True)
+    return storage_path
 
-VARIABLES_E = {
+# --- DEFINING VARIABLES ---
+# We map Census Codes -> Our Clean Schema Names
+VARIABLES = {
     "NAME": "census_name",
-    # Validation Targets
-    "B17001_002E": "poverty_count",
-    "B22001_002E": "snap_households",
-    # Overall Context
+    
+    # 1. OUTCOMES & TARGETS
+    "B17001_002E": "poverty_count_est",  # Estimate
+    "B17001_002M": "poverty_count_moe",  # Margin of Error (CRITICAL MISSING PIECE)
     "B01003_001E": "total_population",
-    "B19013_001E": "median_household_income",
-}
-
-# Add Race Totals (Table B02001)
-VARIABLES_E["B02001_002E"] = "race_white"
-VARIABLES_E["B02001_003E"] = "race_black"
-VARIABLES_E["B02001_005E"] = "race_asian"
-VARIABLES_E["B03002_012E"] = "race_hispanic"
-
-# Add Age x Sex Buckets (Table B01001)
-# Males: 003E to 025E | Females: 027E to 049E
-# We map them to generic names like "male_under_5", "male_5_to_9", etc.
-# Note: This is a simplified mapping for readability.
-AGE_SEX_MAP = {
-    # MALES
+    
+    # 2. RACE BUCKETS (Table B02001)
+    "B02001_002E": "race_white",
+    "B02001_003E": "race_black",
+    "B02001_004E": "race_native",    # Was missing
+    "B02001_005E": "race_asian",
+    "B02001_006E": "race_pacific",   # Was missing
+    "B02001_007E": "race_other",     # Was missing
+    "B02001_008E": "race_two_more",  # Was missing
+    
+    # 3. AGE x SEX BUCKETS (Table B01001)
+    # Males
     "B01001_003E": "m_00_04", "B01001_004E": "m_05_09", "B01001_005E": "m_10_14",
     "B01001_006E": "m_15_17", "B01001_007E": "m_18_19", "B01001_008E": "m_20",
     "B01001_009E": "m_21",    "B01001_010E": "m_22_24", "B01001_011E": "m_25_29",
@@ -47,8 +49,7 @@ AGE_SEX_MAP = {
     "B01001_018E": "m_60_61", "B01001_019E": "m_62_64", "B01001_020E": "m_65_66",
     "B01001_021E": "m_67_69", "B01001_022E": "m_70_74", "B01001_023E": "m_75_79",
     "B01001_024E": "m_80_84", "B01001_025E": "m_85_plus",
-    
-    # FEMALES (Similar structure, jumping to 027E)
+    # Females
     "B01001_027E": "f_00_04", "B01001_028E": "f_05_09", "B01001_029E": "f_10_14",
     "B01001_030E": "f_15_17", "B01001_031E": "f_18_19", "B01001_032E": "f_20",
     "B01001_033E": "f_21",    "B01001_034E": "f_22_24", "B01001_035E": "f_25_29",
@@ -59,34 +60,22 @@ AGE_SEX_MAP = {
     "B01001_048E": "f_80_84", "B01001_049E": "f_85_plus",
 }
 
-VARIABLES_E.update(AGE_SEX_MAP)
-
-def get_storage_path():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    storage_path = os.path.join(script_dir, "..", "data", "raw")
-    if not os.path.exists(storage_path):
-        os.makedirs(storage_path)
-    return storage_path
-
 def download_state_tracts(state_abbr, state_fips):
     print(f"  Fetching data for {state_abbr} (FIPS {state_fips})...")
     
-    # Chunking: The API limits query length (50 vars max usually). 
-    # We have ~60 vars now. We must split the request.
-    
-    all_codes = list(VARIABLES_E.keys())
-    # Split into chunks of 40 to be safe
+    # We must chunk the request because 60+ variables exceeds API limits
+    all_codes = list(VARIABLES.keys())
     chunk_size = 40
     chunks = [all_codes[i:i + chunk_size] for i in range(0, len(all_codes), chunk_size)]
     
     state_df = None
     
     for i, chunk in enumerate(chunks):
-        var_string = ",".join(chunk)
-        # Always include NAME in every chunk to ensure alignment (though Census API order is stable)
+        # Ensure NAME is in every chunk for alignment
         if "NAME" not in chunk:
-            var_string = "NAME," + var_string
+            chunk = ["NAME"] + chunk
             
+        var_string = ",".join(chunk)
         api_url = f"{BASE_URL}?get={var_string}&for=tract:*&in=state:{state_fips}"
         
         try:
@@ -101,50 +90,49 @@ def download_state_tracts(state_abbr, state_fips):
             if state_df is None:
                 state_df = chunk_df
             else:
-                # Merge based on Geo ID parts
-                state_df = pd.concat([state_df, chunk_df.drop(columns=['NAME', 'state', 'county', 'tract'], errors='ignore')], axis=1)
+                # Merge on Geography columns
+                # We drop 'NAME' and geo-ids from subsequent chunks to avoid duplicates
+                chunk_df = chunk_df.drop(columns=['NAME', 'state', 'county', 'tract'], errors='ignore')
+                state_df = pd.concat([state_df, chunk_df], axis=1)
                 
         except Exception as e:
             print(f"  ❌ Failed chunk {i} for {state_abbr}: {e}")
             return None
 
-    # De-duplicate columns if any (like NAME appearing twice)
-    state_df = state_df.loc[:,~state_df.columns.duplicated()]
+    # Rename to our clean schema
+    state_df.rename(columns=VARIABLES, inplace=True)
     
-    # Rename
-    state_df.rename(columns=VARIABLES_E, inplace=True)
+    # Clean up duplicated columns from the concat
+    state_df = state_df.loc[:,~state_df.columns.duplicated()]
     state_df["state_abbr"] = state_abbr
+    
     return state_df
 
 def main():
-    output_dir = get_storage_path()
+    print(f"--- Downloading Tract Data (Buckets + MOE + Race) ---")
     all_data = []
-    
-    print(f"--- Downloading Tract Buckets (Sex x Age) + Outcomes ---")
     
     for state_abbr, fips in TARGET_STATES.items():
         df = download_state_tracts(state_abbr, fips)
         if df is not None:
             all_data.append(df)
-        time.sleep(1)
+        time.sleep(0.5)
 
     if all_data:
         final_df = pd.concat(all_data, ignore_index=True)
-        final_df["GEOID"] = final_df["state"] + final_df["county"] + final_df["tract"]
         
-        # Convert numeric
-        cols_to_skip = ["census_name", "state_abbr", "GEOID", "state", "county", "tract"]
+        # Convert Numeric Columns
+        # Everything except these is a number
+        non_numeric = ["census_name", "state_abbr", "GEOID", "state", "county", "tract"]
         for col in final_df.columns:
-            if col not in cols_to_skip:
+            if col not in non_numeric:
                 final_df[col] = pd.to_numeric(final_df[col], errors='coerce')
-        
-        output_file = os.path.join(output_dir, "acs_tract_demographics_2023.csv")
-        final_df.to_csv(output_file, index=False)
-        print(f"\n✅ Success! Saved {len(final_df)} tracts with demographic buckets.")
-        print(f"   Saved to: {output_file}")
 
+        output_path = os.path.join(get_storage_path(), "acs_tract_demographics_2023.csv")
+        final_df.to_csv(output_path, index=False)
+        print(f"\n✅ Success! Saved {len(final_df)} tracts to: {output_path}")
     else:
-        print("❌ No data downloaded.")
+        print("❌ Download failed.")
 
 if __name__ == "__main__":
     main()
