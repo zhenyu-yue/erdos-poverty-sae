@@ -1,58 +1,61 @@
-# Project Roadmap: Small Area Estimation of Poverty & SNAP in the DC Metro Area
+# 📌 Project Roadmap: Small Area Estimation of Poverty (The "Strict Schema" Approach)
 
 ## 1. Executive Summary
-**The Goal:** To produce stable, granular estimates of **Poverty Status** and **SNAP Eligibility** at the Census Tract level for the Washington D.C. Metropolitan Area.
+**The Goal:** To produce granular, stable estimates of poverty at the Census Tract level for the Washington D.C. Metropolitan Area.
 
-**The Problem:** Official Census (ACS) estimates for small tracts have high Margins of Error (often >50% CV), making them unreliable for local policy. Official model-based estimates (SAIPE) only exist at the County level, masking neighborhood-level inequality.
+**The Pivot:** We originally planned to use a rich feature set (Education, Rent, Employment). However, we discovered a **"Granularity Gap"**: these features exist for *people* (PUMS) but not for *small tracts*.
 
-**The Solution:** We will use **Machine Learning (XGBoost)** combined with **Post-Stratification** (Small Area Estimation) to "borrow strength" from regional PUMS data. This allows us to predict tract-level poverty with significantly lower variance than the direct survey estimates.
+**The Solution:** We will implement a **Common Schema Model**. We train our classifier *only* on the features available in the standard Census Demographic tables (Sex by Age, and Race). We sacrifice feature complexity for **geographic precision**.
 
 ## 2. Geographic Scope: The DMV
 We are restricting our analysis to the **Washington-Arlington-Alexandria Metro Area**.
-* **District of Columbia (FIPS 11):** All Wards.
-* **Maryland (FIPS 24):** Montgomery County, Prince George's County.
-* **Virginia (FIPS 51):** Arlington, Alexandria, Fairfax County.
-
-*Rationale:* This region provides a perfect test case of extreme inequality (wealthy suburbs vs. pockets of deep poverty) that simple linear regression models often fail to capture.
+* **Hierarchy:**
+    * **Unit of Analysis:** Person (PUMS Microdata).
+    * **Unit of Prediction:** Census Tract (11-digit GEOID).
+    * **Unit of Validation:** County (5-digit FIPS) & PUMA (Spatial Cluster).
 
 ## 3. The Methodology (The "Pipeline")
 
-We will implement a **Model-Based Post-Stratification** pipeline.
+### Step 1: The "Common Schema" Data
+We align three datasets to share a single, strict vocabulary of features.
 
-### Step 1: Data Acquisition
-* **Training Data:** ACS Public Use Microdata Sample (PUMS) for MD, DC, VA (Person & Housing records).
-* **Target Data (The Canvas):** ACS Summary Tables (Tract-level counts) for specific demographic buckets (e.g., Age $\times$ Sex $\times$ Race).
-* **Validation Data:** USDA SNAP Participation counts (County level) and SAIPE Poverty estimates.
+* **Training Data (PUMS):** Individual records ($N \approx 150k$).
+    * *Features:* `Age`, `Sex`, `Race`.
+    * *Target:* `is_poor` (Binary).
+    * *Context:* `PUMA` (for regional random effects).
+* **Prediction Data (Tracts):** Aggregate counts ($N \approx 1,500$ tracts).
+    * *Buckets:* 46 Age/Sex bins (Table B01001) + 7 Race bins (Table B02001).
+* **Validation Data (Anchors):**
+    * *Admin:* USDA SNAP Participation (The "Reality").
+    * *Model:* Census SAIPE Estimates (The "Official Benchmark").
 
-### Step 2: The Model (XGBoost)
-We train a binary classifier on individual people (PUMS).
-* **Inputs ($X$):** Age, Sex, Race, Education, Employment Status, Family Structure, Rent Burden.
-* **Contextual Features:** County-level unemployment rate (to capture local economic environment).
-* **Targets ($Y$):**
-    1.  `is_poor` (Income < 100% Federal Poverty Line).
-    2.  `is_snap_eligible` (Income < 130% FPL + Asset proxies).
+### Step 2: The Baseline Model (Classification)
+We treat poverty prediction as a probability problem, strictly constrained to demographic inputs.
 
-### Step 3: Post-Stratification (The "Bucket" Strategy)
-We cannot feed "Tract Averages" into the model due to aggregation bias. Instead, we use the **Synthetic Reconstruction** method:
+* **Algorithm:** Logistic Regression (Baseline) vs. Random Forest/XGBoost (Challenger).
+* **The Question:** "Given *only* a person's Age, Sex, and Race, how accurately can we predict their poverty status?"
+* **Metric:** ROC-AUC and F1-Score (focusing on the "Invisible Poor" residuals).
 
-1.  **Buckets:** Divide the population into $K$ demographic buckets (e.g., *Bucket 1: Male, 18-24, Black*).
-2.  **Counts:** Get the exact count $N_{jk}$ of people in bucket $k$ for Tract $j$ from ACS Tables (B01001, B02001).
-3.  **Prediction:** Use XGBoost to predict the probability of poverty $P_k$ for a person in that bucket.
-4.  **Aggregation:** Calculate the expected number of poor people in the tract:
-    $$\hat{Y}_j = \sum_{k=1}^{K} (P_k \times N_{jk})$$
+### Step 3: Post-Stratification (The "Synthetic Sum")
+Since we lack a single table with *Age x Sex x Race* for tracts, we use **Marginal Reconstruction**:
 
-## 4. Validation & Uncertainty Quantification
-Since we are replacing official errors with model estimates, we must prove our numbers are more stable.
+1.  **Primary Prediction:** Calculate poverty probability $P_{bucket}$ for each of the 46 **Age $\times$ Sex** buckets.
+2.  **Projection:** Multiply $P_{bucket}$ by the Census Tract count for that bucket.
+    $$\hat{Y}_{Tract} = \sum_{bucket=1}^{46} (P_{bucket} \times Count_{Tract, bucket})$$
+3.  **Adjustment (Raking):** Use the **Race** totals (Table B02001) as a constraint (e.g., if a tract is 90% Black, adjust the Age/Sex predictions to reflect the higher/lower poverty rates of that demographic in the PUMS training data).
 
-### The Bootstrap (Parametric)
-To calculate the confidence interval of our model's predictions:
-1.  **Resample:** Draw $B=100$ bootstrap samples from the original PUMS training data (with replacement).
-2.  **Retrain:** Train 100 separate XGBoost models.
-3.  **Repredict:** Generate 100 predictions for every Census Tract.
-4.  **Variance:** Calculate the standard deviation of these 100 predictions for each tract.
+## 4. Validation Strategy (The "Three-Way Truth")
+We will validate our estimates by triangulating three conflicting sources:
 
-**Success Criterion:** Our Bootstrap Standard Error should be **smaller** than the ACS Margin of Error for the majority of tracts.
+1.  **The Survey (ACS):** High variance, but statistically unbiased.
+    * *Test:* Do our estimates fall within the ACS Margin of Error? (They should be more precise).
+2.  **The Admin Data (SNAP):** Hard counts of recipients.
+    * *Test:* Correlation between our `Predicted_Poor` and `SNAP_Recipients`. (Ideally $r > 0.8$).
+3.  **The Official Model (SAIPE):** County-level benchmarks.
+    * *Test:* When we sum our Tracts to the County level, do we match the SAIPE estimate?
 
-### Calibration Check
-We aggregate our tract-level predictions up to the **County Level** and compare them against the official **SAIPE** estimates.
-* *Goal:* Our summed predictions should fall within the 90% Confidence Interval of the SAIPE county total.
+## 5. Key Deliverables (Checkpoint 1)
+1.  **`00_pipeline.py`:** Robust ETL that merges PUMS, Tracts, and County data. (✅ Done)
+2.  **`data_inventory.md`:** Strict definition of the "Common Schema." (✅ Done)
+3.  **`02_baseline_model.ipynb`:** Proof that demographics contain a predictable signal. (Next Step)
+4.  **`residuals_analysis.png`:** A visualization of the "Invisible Poor" (Who does the model miss?).
