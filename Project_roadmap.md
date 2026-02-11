@@ -37,12 +37,12 @@ We treat poverty prediction as a probability problem, strictly constrained to de
 * **Metric:** ROC-AUC and F1-Score (focusing on the "Invisible Poor" residuals).
 
 ### Step 3: Post-Stratification (The "Synthetic Sum")
-Since we lack a single table with *Age x Sex x Race* for tracts, we use **Marginal Reconstruction**:
+Since we lack a single table with *Age x Sex x Race* for tracts, we use **Marginal Reconstruction** to bridge the gap:
 
-1.  **Primary Prediction:** Calculate poverty probability $P_{bucket}$ for each of the 46 **Age $\times$ Sex** buckets.
-2.  **Projection:** Multiply $P_{bucket}$ by the Census Tract count for that bucket.
-    $$\hat{Y}_{Tract} = \sum_{bucket=1}^{46} (P_{bucket} \times Count_{Tract, bucket})$$
-3.  **Adjustment (Raking):** Use the **Race** totals (Table B02001) as a constraint (e.g., if a tract is 90% Black, adjust the Age/Sex predictions to reflect the higher/lower poverty rates of that demographic in the PUMS training data).
+1.  **The Optimization Problem:** We need to know how many people in a tract fall into specific "Age $\times$ Sex $\times$ Race" buckets (e.g., *Black Male, 20-24*), but the Census only gives us separate Age/Sex totals and Race totals.
+2.  **The Solution (Iterative Proportional Fitting):** We mathematically solve for the demographic distribution that is **closest to the regional average (ACS PUMS)** while strictly satisfying the specific Age/Sex and Race counts of that Census Tract.
+3.  **Prediction:** We apply our trained model probabilities to these synthesized counts to generate the final poverty estimate for the tract.
+    $$\hat{Y}_{Tract} = \sum_{bucket} (\hat{P}_{bucket} \times \text{Synthesized Count}_{bucket})$$
 
 ## 4. Validation Strategy (The "Three-Way Truth")
 We will validate our estimates by triangulating three conflicting sources:
@@ -58,4 +58,3 @@ We will validate our estimates by triangulating three conflicting sources:
 1.  **`00_pipeline.py`:** Robust ETL that merges PUMS, Tracts, and County data. (✅ Done)
 2.  **`data_inventory.md`:** Strict definition of the "Common Schema." (✅ Done)
 3.  **`02_baseline_model.ipynb`:** Proof that demographics contain a predictable signal. (Next Step)
-4.  **`residuals_analysis.png`:** A visualization of the "Invisible Poor" (Who does the model miss?).

@@ -1,62 +1,27 @@
-# Erdos Project: Small Area Estimation for Poverty & SNAP
+# Small Area Estimation of Poverty in the DMV
+*A model-based approach to improving the precision of neighborhood-level economic indicators.*
 
-This project uses Machine Learning (XGBoost/Mixed Effects) to estimate poverty and SNAP participation rates at the county level using ACS PUMS data.
+## Objective
+The American Community Survey (ACS) provides critical socioeconomic data, but at the Census Tract level, estimates often suffer from high Margins of Error (MOEs) due to small sample sizes. This project implements a Model-Based Post-Stratification pipeline to "borrow strength" from regional microdata (PUMS), producing stable, granular poverty estimates for the Washington-Arlington-Alexandria Metropolitan Area.
 
-## 📂 Project Structure
+## Key Performance Indicators (KPIs)
 
-    erdos-poverty-sae/
-    ├── data/                  <-- Data files (Ignored by Git)
-    │   └── raw/               <-- Raw CSVs from Census & USDA
-    ├── notebooks/             <-- Jupyter Notebooks for analysis
-    ├── src/                   <-- Python scripts for automation
-    ├── requirements.txt       <-- Python dependencies
-    └── setup_env.sh           <-- One-click setup script
+| Metric | Result | Definition |
+| :--- | :--- | :--- |
+| **CV Reduction** | | Percent improvement in the Coefficient of Variation compared to official ACS estimates. |
+| **Weighted F1-Score** | | Model performance on the poverty class using the ACS PUMS test set. |
+| **SNAP Correlation** | | Pearson correlation ($r$) between model estimates and administrative SNAP participation records. |
+| **SAIPE Benchmarking** | | Mean Absolute Percent Error (MAPE) when aggregating tract estimates to the County level. |
 
-## 🚀 Quick Start Guide
-### 1. Clone the Repo
-```bash
-git clone https://github.com/zhenyu-yue/erdos-poverty-sae.git
-cd erdos-poverty-sae
-```
-(Alternatively, click [here](https://github.com/zhenyu-yue/erdos-poverty-sae.git) to visit the git repo, select "code" then "Download ZIP" and unzip the file.)
+## Methodology
+The pipeline utilizes a "Big Version" spatial estimation strategy to transform individual-level behavior into aggregate-level geography:
+
+1.  **Training on Individuals from ACS:** An XGBoost classifier is trained on individual-level ACS PUMS data to learn the conditional probability of poverty given Age, Sex, and Race. The model is optimized using a weighted log-loss function to account for the PUMS survey design.
+2.  **Raking to Find Population Composition:** Since Census Tract tables do not provide joint distributions (e.g., they show total "Race" and total "Age/Sex" separately), we use **Iterative Proportional Fitting (IPF)** to estimate the joint distribution. This process "rakes" regional demographic proportions from PUMS until they satisfy local tract-level marginal constraints.
+3.  **Estimation and Weighted Sum:** We construct **representative individuals** for each of the 322 demographic buckets (Age x Sex x Race) and calculate their predicted poverty probabilities. The final tract estimate is the weighted sum of these probabilities multiplied by the synthesized population counts.
 
 
-### 2. Set Up Environment
-Don't forget to change your working directory to the project directory before proceeding.
 
-**Option A: Automatic (Recommended)**
-Run the setup script to create a clean environment:
-```bash
-bash setup_env.sh
-conda activate poverty-project
-```
-
-**Option B: Manual (Fast)** If you prefer to use your current Python environment, just install the requirements directly:
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Download the Data
-
-#### A. ACS Census Data (PUMS) 
-Run this script to automatically download the 2024 ACS PUMS data (Person & Housing records) into data/raw/:
-
-```bash
-python src/download_acs.py
-```
-
-#### B. USDA SNAP Data
-1. Download the "Bi-Annual (January and July) State Project Area/County Level Participation and Issuance Data" zip file from the [USDA Website](https://www.fns.usda.gov/pd/supplemental-nutrition-assistance-program-snap). Move the zip file to `data/raw/`.
-
-2. Run 
-```bash
-python src/process_snap.py
-```
-
-### 4. Run the Notebook
-Try to run the following notebook with VScode or with Jupyter. 
-
-```bash
-jupyter notebook notebooks/01_data_exploration.ipynb
-```
+---
+For technical details on the Raking algorithm and variance estimation, see [METHODOLOGY.md](./METHODOLOGY.md).  
+To set up the environment and run the pipeline, see [STARTERS_GUIDE.md](./STARTERS_GUIDE.md).
