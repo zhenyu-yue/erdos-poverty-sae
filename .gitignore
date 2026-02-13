@@ -1,7 +1,6 @@
 # Ignore all data
 data/
 *.csv
-*.zip
 
 # System files
 .DS_Store
