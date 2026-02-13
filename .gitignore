@@ -1,5 +1,11 @@
-# Ignore all data
+# Ignore everything in the data directory by default
 data/
+
+# Allow Git to track .zip files even if they are inside data/
+!data/**/*.zip
+!*.zip
+
+# Ignore all extracted or standalone CSV files
 *.csv
 
 # System files
